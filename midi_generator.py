@@ -10,14 +10,16 @@ from train_classifier import preprocess_sentence
 
 GENERATED_DIR = './generated'
 
+
 def override_neurons(model, layer_idx, override):
     h_state, c_state = model.get_layer(index=layer_idx).states
 
     c_state = c_state.numpy()
     for neuron, value in override.items():
-        c_state[:,int(neuron)] = int(value)
+        c_state[:, int(neuron)] = int(value)
 
     model.get_layer(index=layer_idx).states = (h_state, tf.Variable(c_state))
+
 
 def sample_next(predictions, k):
     # Sample using a categorical distribution over the top k midi chars
@@ -33,6 +35,7 @@ def sample_next(predictions, k):
 
     return predicted_id
 
+
 def process_init_text(model, init_text, char2idx, layer_idx, override):
     model.reset_states()
 
@@ -47,9 +50,10 @@ def process_init_text(model, init_text, char2idx, layer_idx, override):
             predictions = model(input_eval)
         except KeyError:
             if c != "":
-                print("Can't process char", s)
+                print("Can't process char", c)
 
     return predictions
+
 
 def generate_midi(model, char2idx, idx2char, init_text="", seq_len=256, k=3, layer_idx=-2, override={}):
     # Add front and end pad to the initial text
@@ -70,17 +74,18 @@ def generate_midi(model, char2idx, idx2char, init_text="", seq_len=256, k=3, lay
         # Sample using a categorical distribution over the top k midi chars
         predicted_id = sample_next(predictions, k)
 
-         # Append it to generated midi
+        # Append it to generated midi
         midi_generated.append(idx2char[predicted_id])
 
         # override sentiment neurons
         override_neurons(model, layer_idx, override)
 
-        #Run a new forward pass
+        # Run a new forward pass
         input_eval = tf.expand_dims([predicted_id], 0)
         predictions = model(input_eval)
 
     return init_text + " " + " ".join(midi_generated)
+
 
 if __name__ == "__main__":
 
@@ -92,7 +97,7 @@ if __name__ == "__main__":
     parser.add_argument('--units', type=int, required=True, help="LSTM units.")
     parser.add_argument('--layers', type=int, required=True, help="LSTM layers.")
     parser.add_argument('--seqinit', type=str, default="\n", help="Sequence init.")
-    parser.add_argument('--seqlen', type=int, default=256, help="Sequence lenght.")
+    parser.add_argument('--seqlen', type=int, default=256, help="Sequence length.")
     parser.add_argument('--cellix', type=int, default=-2, help="LSTM layer to use as encoder.")
     parser.add_argument('--override', type=str, default="", help="JSON file with neuron values to override.")
     opt = parser.parse_args()
@@ -111,7 +116,7 @@ if __name__ == "__main__":
         print("Override JSON file not provided.")
 
     # Create idx2char from char2idx dict
-    idx2char = {idx:char for char,idx in char2idx.items()}
+    idx2char = {idx: char for char, idx in char2idx.items()}
 
     # Calculate vocab_size from char2idx dict
     vocab_size = len(char2idx)
@@ -122,7 +127,8 @@ if __name__ == "__main__":
     model.build(tf.TensorShape([1, None]))
 
     # Generate a midi as text
-    midi_txt = generate_midi(model, char2idx, idx2char, opt.seqinit, opt.seqlen, layer_idx=opt.cellix, override=override)
+    midi_txt = generate_midi(model, char2idx, idx2char, opt.seqinit, opt.seqlen, layer_idx=opt.cellix,
+                             override=override)
     print(midi_txt)
 
     me.write(midi_txt, os.path.join(GENERATED_DIR, "generated.mid"))
