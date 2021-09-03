@@ -16,7 +16,8 @@ def override_neurons(model, layer_idx, override):
 
     c_state = c_state.numpy()
     for neuron, value in override.items():
-        c_state[:, int(neuron)] = int(value)
+        # why is this int(value) - its making everything zero
+        c_state[:, int(neuron)] = value
 
     model.get_layer(index=layer_idx).states = (h_state, tf.Variable(c_state))
 
@@ -56,6 +57,14 @@ def process_init_text(model, init_text, char2idx, layer_idx, override):
 
 
 def generate_midi(model, char2idx, idx2char, init_text="", seq_len=256, k=3, layer_idx=-2, override={}):
+    """
+    Generates a midi using the model.
+    if override is not empty it's indexes are neuron indexes and its values are the activation values in [-1,1]
+    while predicting the neurons in the c_state that are in override stay the same, and the other chang according to what
+    is seen.
+    this way we can keep the sentiment the same while still changing the song.
+    """
+
     # Add front and end pad to the initial text
     init_text = preprocess_sentence(init_text)
 

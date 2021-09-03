@@ -30,7 +30,10 @@ def plot_weight_contribs(coef):
 
     # Normalize weight contributions
     norm = np.linalg.norm(coef)
+    # # for regression
+    # coef = coef.reshape((len(coef), 1))
     coef = coef/norm
+
 
     plt.plot(range(len(coef[0])), coef.T)
     plt.xlabel('Neuron (Feature) Index')

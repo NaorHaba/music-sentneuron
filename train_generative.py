@@ -84,13 +84,13 @@ if __name__ == "__main__":
     parser.add_argument('--test', type=str, required=True, help="Test dataset.")
     parser.add_argument('--model', type=str, required=False, help="Checkpoint dir.")
     parser.add_argument('--embed', type=int, default=256, help="Embedding size.")
-    parser.add_argument('--units', type=int, default=512, help="LSTM units.")
+    parser.add_argument('--units', type=int, default=256, help="LSTM units.")
     parser.add_argument('--layers', type=int, default=2, help="LSTM layers.")
     parser.add_argument('--batch', type=int, default=64, help="Batch size.")
     parser.add_argument('--epochs', type=int, default=10, help="Epochs.")
     parser.add_argument('--seqlen', type=int, default=100, help="Sequence length.")
     parser.add_argument('--lrate', type=float, default=0.001, help="Learning rate.")
-    parser.add_argument('--drop', type=float, default=0.0, help="Dropout.")
+    parser.add_argument('--drop', type=float, default=0.05, help="Dropout.")
     opt = parser.parse_args()
 
     # Encode midi files as text with vocab

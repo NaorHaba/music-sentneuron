@@ -1,4 +1,5 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import json
 import pickle
 import argparse
@@ -79,7 +80,7 @@ def calc_fitness(individual, gen_model, cls_model, char2idx, idx2char, layer_idx
 
     # Get activated neurons
     sentneuron_ixs = get_activated_neurons(cls_model)
-    assert len(individual) == len(sentneuron_ixs)
+    assert len(individual) == len(sentneuron_ixs), "assert in calc_fitness failed!, len of ind neq to len of sentneuron"
 
     # Use individual gens to override model neurons
     override = {}
@@ -88,6 +89,7 @@ def calc_fitness(individual, gen_model, cls_model, char2idx, idx2char, layer_idx
 
     # Generate pieces and encode them using the cell state of the generative model
     for i in range(runs):
+        # there is a hard coded number!!
         midi_text = generate_midi(gen_model, char2idx, idx2char, seq_len=64, layer_idx=layer_idx, override=override)
         generated_midis[i] = encode_sentence(gen_model, midi_text, char2idx, layer_idx)
 
@@ -108,6 +110,7 @@ def evolve(pop_size, ind_size, mut_rate, elite_rate, epochs):
 
     # Evaluate initial population
     fitness_pop = evaluate(population, gen_model, cls_model, char2idx, idx2char, opt.cellix, opt.sent)
+    fitness_pop = np.random.uniform(0, 1, (10, 1))
     print("--> Fitness: \n", fitness_pop)
 
     for i in range(epochs):
@@ -116,7 +119,7 @@ def evolve(pop_size, ind_size, mut_rate, elite_rate, epochs):
         # Select individuals via roulette wheel to form a mating pool
         mating_pool = select(population, fitness_pop, pop_size, ind_size, elite_rate)
 
-        # Reproduce matin pool with crossover and mutation to form new population
+        # Reproduce mating pool with crossover and mutation to form new population
         population = reproduce(mating_pool, pop_size, ind_size, mut_rate)
 
         # Calculate fitness of each individual of the population
@@ -149,7 +152,7 @@ if __name__ == "__main__":
         char2idx = json.load(f)
 
     # Create idx2char from char2idx dict
-    idx2char = {idx:char for char,idx in char2idx.items()}
+    idx2char = {idx:char for char, idx in char2idx.items()}
 
     # Calculate vocab_size from char2idx dict
     vocab_size = len(char2idx)
@@ -168,6 +171,7 @@ if __name__ == "__main__":
     ind_size = len(sentneuron_ixs)
 
     population, fitness_pop = evolve(opt.popsize, ind_size, opt.mrate, opt.elitism, opt.epochs)
+
 
     # Get best individual
     best_idx = np.argmax(fitness_pop)

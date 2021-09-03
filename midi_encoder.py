@@ -206,6 +206,8 @@ def encoding2midi(note_encoding, ts_duration=0.25):
     piano_stream = m21.stream.Stream(notes)
     main_stream = m21.stream.Stream([piano_stream])
 
+    # main_stream = m21.midi.translate.prepareStreamForMidi(main_stream)  # added by Naor after reading some docs
+
     return m21.midi.translate.streamToMidiFile(main_stream)
 
 
