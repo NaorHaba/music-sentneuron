@@ -109,7 +109,6 @@ def evolve(pop_size, ind_size, mut_rate, elite_rate, epochs):
 
     # Evaluate initial population
     fitness_pop = evaluate(population, gen_model, cls_model, char2idx, idx2char, opt.cellix, opt.sent)
-    fitness_pop = np.random.uniform(0, 1, (10, 1))
     print("--> Fitness: \n", fitness_pop)
 
     for i in range(epochs):
