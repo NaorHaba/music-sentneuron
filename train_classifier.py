@@ -8,6 +8,8 @@ import tensorflow as tf
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import RFE
+from sklearn.svm import SVR
 
 
 import midi_encoder as me
@@ -96,7 +98,15 @@ def encode_sentence(model, text, char2idx, layer_idx):
 #     return np.array(xs), np.array(ys)
 
 
-def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output):
+def select_features(xs, ys, portion):
+    estimator = SVR(kernel="linear")
+    rfe_selector = RFE(estimator, n_features_to_select=portion, step=1)
+    selector = rfe_selector.fit(xs, ys)
+    rfe_support = selector.support_  # TODO: consider using ranking_
+    return xs[:, rfe_support]
+
+
+def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output, n_features):
 
     def get_label_classifier(valences, arousals, model_output):
         def radian_to_point(radian):
@@ -150,8 +160,10 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
         xs.append(encoding)
         arousals.append(arousal)
         valences.append(valence)
-    ys = calc_y(np.array(arousals).astype(np.float), np.array(valences).astype(np.float), model_output)
-    return np.array(xs), np.array(ys)
+    ys = np.array(calc_y(np.array(arousals).astype(np.float), np.array(valences).astype(np.float), model_output))
+    xs = np.array(xs)
+    xs = select_features(xs, ys, n_features)
+    return xs, ys
 
 
 def get_model_coef(sent_model, model_output):
@@ -325,6 +337,7 @@ if __name__ == "__main__":
     parser.add_argument('--layers', type=int, required=True, help="LSTM layers.")
     parser.add_argument('--cellix', type=int, required=True, help="LSTM layer to use as encoder.")
     parser.add_argument('--model_output', type=int, default=2, help="amount of classes, infinity means regression")
+    parser.add_argument('--n_features', type=float, default=0.25, help="amount of classes, infinity means regression")
     opt = parser.parse_args()
 
     # Load char2idx dict from json file
@@ -341,7 +354,7 @@ if __name__ == "__main__":
 
     # Build dataset from encoded labelled midis
     # train_dataset = build_dataset(opt.train, generative_model, char2idx, opt.cellix, opt.model_output)
-    x, y = build_dataset(opt.dataset, generative_model, char2idx, opt.cellix, opt.model_output)
+    x, y = build_dataset(opt.dataset, generative_model, char2idx, opt.cellix, opt.model_output, opt.n_features)
 
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
     train_dataset, test_dataset = (x_train, y_train), (x_test, y_test)
