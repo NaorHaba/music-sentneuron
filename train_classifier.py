@@ -15,7 +15,7 @@ import plot_results as pr
 
 from train_generative import build_generative_model
 from sklearn.linear_model import LogisticRegression, LinearRegression
-# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 # Directory where trained model will be saved
 TRAIN_DIR = "./trained"
@@ -39,7 +39,7 @@ def preprocess_sentence(text, front_pad='\n ', end_pad=''):
     text = front_pad+text+end_pad
     return text
 
-def encode_sentence(model, text, char2idx, layer_idx):
+def encode_sentence(model, text, char2idx, layer_idxs):
     text = preprocess_sentence(text)
 
     # Reset LSTMs hidden and cell states
@@ -53,12 +53,16 @@ def encode_sentence(model, text, char2idx, layer_idx):
         except KeyError:
             if c != "":
                 print("Can't process char", c)
-
-    h_state, c_state = model.get_layer(index=layer_idx).states
-
+    h_states = []
+    c_states = []
+    for layer_idx in layer_idxs:
+        h_state, c_state = model.get_layer(index=layer_idx).states
+        h_states.append(tf.squeeze(h_state, 0))
+        c_states.append(tf.squeeze(c_state, 0))
+    c_state = np.concatenate(c_states)
+    h_state = np.concatenate(h_states)
     # remove the batch dimension
     #h_state = tf.squeeze(h_state, 0)
-    c_state = tf.squeeze(c_state, 0)
 
     return tf.math.tanh(c_state).numpy()
 
@@ -97,7 +101,6 @@ def encode_sentence(model, text, char2idx, layer_idx):
 
 
 def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output):
-
     def get_label_classifier(valences, arousals, model_output):
         def radian_to_point(radian):
             return np.array([np.cos(radian), np.sin(radian)])
@@ -323,9 +326,10 @@ if __name__ == "__main__":
     parser.add_argument('--embed', type=int, required=True, help="Embedding size.")
     parser.add_argument('--units', type=int, required=True, help="LSTM units.")
     parser.add_argument('--layers', type=int, required=True, help="LSTM layers.")
-    parser.add_argument('--cellix', type=int, required=True, help="LSTM layer to use as encoder.")
+    parser.add_argument('--cellix', nargs='+', type=int, required=True, help="LSTM layer to use as encoder.")
     parser.add_argument('--model_output', type=int, default=2, help="amount of classes, infinity means regression")
     opt = parser.parse_args()
+
 
     # Load char2idx dict from json file
     with open(opt.ch2ix) as f:
