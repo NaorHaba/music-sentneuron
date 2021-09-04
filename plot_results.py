@@ -30,8 +30,7 @@ def plot_weight_contribs(coef):
 
     # Normalize weight contributions
     norm = np.linalg.norm(coef)
-    # # for regression
-    # coef = coef.reshape((len(coef), 1))
+    coef = coef.reshape((len(coef), 1))
     coef = coef/norm
 
 
