@@ -6,20 +6,27 @@ import tensorflow as tf
 import midi_encoder as me
 
 from train_generative import build_generative_model
-from train_classifier import preprocess_sentence
+from train_classifier import preprocess_sentence, get_states_from_layers
 
 GENERATED_DIR = './generated'
 
 
-def override_neurons(model, layer_idx, override):
-    h_state, c_state = model.get_layer(index=layer_idx).states
+def update_states_for_layers(model, layer_idxs, h_state, c_state):
+    for layer_idx in layer_idxs:
+        units = model.get_layer(index=layer_idx).units
+        model.get_layer(index=layer_idx).states = (tf.Variable(h_state[(layer_idx - 1) * units: layer_idx * units]),
+                                                   tf.Variable(c_state[(layer_idx - 1) * units: layer_idx * units]))
+        return model
 
-    c_state = c_state.numpy()
+
+def override_neurons(model, layer_idxs, override):
+    h_state, c_state = get_states_from_layers(model, layer_idxs)
+
     for neuron, value in override.items():
         # why is this int(value) - its making everything zero
         c_state[:, int(neuron)] = value
 
-    model.get_layer(index=layer_idx).states = (h_state, tf.Variable(c_state))
+    model = update_states_for_layers(model, layer_idxs, h_state, c_state)
 
 
 def sample_next(predictions, k):
@@ -37,7 +44,7 @@ def sample_next(predictions, k):
     return predicted_id
 
 
-def process_init_text(model, init_text, char2idx, layer_idx, override):
+def process_init_text(model, init_text, char2idx, layer_idxs, override):
     model.reset_states()
 
     for c in init_text.split(" "):
@@ -46,7 +53,7 @@ def process_init_text(model, init_text, char2idx, layer_idx, override):
             input_eval = tf.expand_dims([char2idx[c]], 0)
 
             # override sentiment neurons
-            override_neurons(model, layer_idx, override)
+            override_neurons(model, layer_idxs, override)
 
             predictions = model(input_eval)
         except KeyError:
@@ -56,7 +63,7 @@ def process_init_text(model, init_text, char2idx, layer_idx, override):
     return predictions
 
 
-def generate_midi(model, char2idx, idx2char, init_text="", seq_len=256, k=3, layer_idx=-2, override={}):
+def generate_midi(model, char2idx, idx2char, init_text="", seq_len=256, k=3, layer_idxs=(-2, ), override={}):
     """
     Generates a midi using the model.
     if override is not empty it's indexes are neuron indexes and its values are the activation values in [-1,1]
@@ -72,7 +79,7 @@ def generate_midi(model, char2idx, idx2char, init_text="", seq_len=256, k=3, lay
     midi_generated = []
 
     # Process initial text
-    predictions = process_init_text(model, init_text, char2idx, layer_idx, override)
+    predictions = process_init_text(model, init_text, char2idx, layer_idxs, override)
 
     # Here batch size == 1
     model.reset_states()
@@ -87,7 +94,7 @@ def generate_midi(model, char2idx, idx2char, init_text="", seq_len=256, k=3, lay
         midi_generated.append(idx2char[predicted_id])
 
         # override sentiment neurons
-        override_neurons(model, layer_idx, override)
+        override_neurons(model, layer_idxs, override)
 
         # Run a new forward pass
         input_eval = tf.expand_dims([predicted_id], 0)

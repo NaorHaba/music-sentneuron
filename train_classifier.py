@@ -8,7 +8,8 @@ import tensorflow as tf
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
-
+from sklearn.feature_selection import RFE
+from sklearn.svm import SVR, SVC
 
 import midi_encoder as me
 import plot_results as pr
@@ -39,6 +40,18 @@ def preprocess_sentence(text, front_pad='\n ', end_pad=''):
     text = front_pad+text+end_pad
     return text
 
+
+def get_states_from_layers(model, layer_idxs):
+    h_states = []
+    c_states = []
+    for layer_idx in layer_idxs:
+        h_state, c_state = model.get_layer(index=layer_idx).states
+        h_states.append(tf.squeeze(h_state, 0))
+        c_states.append(tf.squeeze(c_state, 0))
+    c_state = np.concatenate(c_states)
+    h_state = np.concatenate(h_states)
+    return h_state, c_state
+
 def encode_sentence(model, text, char2idx, layer_idxs):
     text = preprocess_sentence(text)
 
@@ -53,16 +66,10 @@ def encode_sentence(model, text, char2idx, layer_idxs):
         except KeyError:
             if c != "":
                 print("Can't process char", c)
-    h_states = []
-    c_states = []
-    for layer_idx in layer_idxs:
-        h_state, c_state = model.get_layer(index=layer_idx).states
-        h_states.append(tf.squeeze(h_state, 0))
-        c_states.append(tf.squeeze(c_state, 0))
-    c_state = np.concatenate(c_states)
-    h_state = np.concatenate(h_states)
+    h_state, c_state = get_states_from_layers(model, layer_idxs)
     # remove the batch dimension
     #h_state = tf.squeeze(h_state, 0)
+    # c_state = tf.squeeze(c_state, 0)
 
     return tf.math.tanh(c_state).numpy()
 
@@ -100,7 +107,21 @@ def encode_sentence(model, text, char2idx, layer_idxs):
 #     return np.array(xs), np.array(ys)
 
 
+def select_features(x_train, y_train, x_test, portion, model_output, activated_neurons_file):
+    if model_output == float("inf"):
+        estimator = SVR(kernel="linear")
+    else:
+        estimator = SVC(kernel="linear")
+    rfe_selector = RFE(estimator, n_features_to_select=portion, step=1)
+    selector = rfe_selector.fit(x_train, y_train)
+    rfe_support = selector.support_  # TODO: consider using ranking_
+
+    np.save(activated_neurons_file, np.where(rfe_support))
+    return x_train[:, rfe_support], x_test[:, rfe_support]
+
+
 def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output):
+
     def get_label_classifier(valences, arousals, model_output):
         def radian_to_point(radian):
             return np.array([np.cos(radian), np.sin(radian)])
@@ -134,7 +155,7 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
 
         data_dir = os.path.dirname(datapath)
         # TODO find a better solution than '..' maybe change vigimidi_sent.csv
-        path = os.path.join(data_dir, '..', filepath).replace('.mid', '')
+        path = os.path.join(data_dir, filepath).replace('.mid', '')
         phrase_path = path + ".mid"
         encoded_path = path + ".npy"
 
@@ -153,8 +174,9 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
         xs.append(encoding)
         arousals.append(arousal)
         valences.append(valence)
-    ys = calc_y(np.array(arousals).astype(np.float), np.array(valences).astype(np.float), model_output)
-    return np.array(xs), np.array(ys)
+    ys = np.array(calc_y(np.array(arousals).astype(np.float), np.array(valences).astype(np.float), model_output))
+    xs = np.array(xs)
+    return xs, ys
 
 
 def get_model_coef(sent_model, model_output):
@@ -168,19 +190,16 @@ def get_model_coef(sent_model, model_output):
 def create_model(model_output):
 
     if model_output == float("inf"):
-        return LinearRegression()
+        return SVR()
     else:
-        return LogisticRegression()
+        return SVC()
 
 
 def create_param_grid(model_output):
     if model_output == float("inf"):
-        return {}
+        return {'C': [0.1, 1, 10, 100], 'gamma': [1, 0.1, 0.01, 0.001], 'kernel': ['linear', 'rbf', 'poly', 'sigmoid']}
     else:
-        return {'C': 2**np.arange(-8, 1).astype(np.float),
-                'solver': ["liblinear"],
-                'penalty': ['l1'],
-                'random_state': [42]}
+        return {'C': [0.1, 1, 10, 100], 'gamma': [1, 0.1, 0.01, 0.001], 'kernel': ['linear', 'rbf', 'poly', 'sigmoid']}
 
 
 def get_score_metric(model_output):
@@ -204,7 +223,6 @@ def train_model(train_dataset, test_dataset, model_output):
     print("cv_score", cv_score)
     # TODO decide if sent_pp needs to be a pipeline or only the model state in the pipeline
     sent_model = search.best_estimator_
-    coef = get_model_coef(sent_model, model_output)
 
     score = sent_model.score(teX, teY)
     # Persist sentiment classifier
@@ -212,14 +230,13 @@ def train_model(train_dataset, test_dataset, model_output):
         pickle.dump(sent_model, f)
 
     # Get activated neurons
-    sentneuron_ixs = get_activated_neurons(sent_model, coef)
+    sentneuron_ixs = get_activated_neurons(activated_neurons_file)
 
     # Plot results
-    pr.plot_weight_contribs(coef)
-    pr.plot_logits(trX, trY, sentneuron_ixs)
+    # pr.plot_weight_contribs(coef)
+    # pr.plot_logits(trX, trY, sentneuron_ixs)
 
-    return sentneuron_ixs, score
-
+    return score
 
 
 # def train_classifier_model(train_dataset, test_dataset, C=2**np.arange(-8, 1).astype(np.float), seed=42, penalty="l1"):
@@ -296,24 +313,8 @@ def train_model(train_dataset, test_dataset, model_output):
 #     return sentneuron_ixs, score
 
 
-def get_activated_neurons(sent_classfier, coef=None):
-    if coef is None:
-        coef = get_model_coef(sent_classfier)
-    neurons_not_zero = len(np.argwhere(coef))
-
-    weights = coef.T
-    weights = weights.reshape(len(weights), 1)
-    weight_penalties = np.squeeze(np.linalg.norm(weights, ord=1, axis=1))
-    # weight_penalties = abs(weights).sum()
-    if neurons_not_zero == 1:
-        neuron_ixs = np.array([np.argmax(weight_penalties)])
-    elif neurons_not_zero >= np.log(len(weight_penalties)):
-        neuron_ixs = np.argsort(weight_penalties)[-neurons_not_zero:][::-1]
-    else:
-        neuron_ixs = np.argpartition(weight_penalties, -neurons_not_zero)[-neurons_not_zero:]
-        neuron_ixs = (neuron_ixs[np.argsort(weight_penalties[neuron_ixs])])[::-1]
-
-    return neuron_ixs
+def get_activated_neurons(activated_neurons_file):
+    return np.load(activated_neurons_file)
 
 
 if __name__ == "__main__":
@@ -327,9 +328,12 @@ if __name__ == "__main__":
     parser.add_argument('--units', type=int, required=True, help="LSTM units.")
     parser.add_argument('--layers', type=int, required=True, help="LSTM layers.")
     parser.add_argument('--cellix', nargs='+', type=int, required=True, help="LSTM layer to use as encoder.")
-    parser.add_argument('--model_output', type=int, default=2, help="amount of classes, infinity means regression")
+    parser.add_argument('--model_output', type=int, default=float("inf"),
+                        help="amount of classes, infinity means regression")
+    parser.add_argument('--n_features', type=float, default=0.1, help="amount of classes, infinity means regression")
+    parser.add_argument('--activated_neurons_file', type=str,
+                        default='trained/activated_neurons.npy', help="path to file saving the activated neurons indices")
     opt = parser.parse_args()
-
 
     # Load char2idx dict from json file
     with open(opt.ch2ix) as f:
@@ -348,10 +352,12 @@ if __name__ == "__main__":
     x, y = build_dataset(opt.dataset, generative_model, char2idx, opt.cellix, opt.model_output)
 
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+    x_train, x_test = select_features(x_train, y_train, x_test, opt.n_features, opt.model_output, opt.activated_neurons_file)
     train_dataset, test_dataset = (x_train, y_train), (x_test, y_test)
 
     # Train model
-    sentneuron_ixs, score = train_model(train_dataset, test_dataset, opt.model_output)
+    score = train_model(train_dataset, test_dataset, opt.model_output)
+    sentneuron_ixs = np.load(opt.activated_neurons_file)
 
     print("Total Neurons Used:", len(sentneuron_ixs), "\n", sentneuron_ixs)
     print("Test Score:", score)
