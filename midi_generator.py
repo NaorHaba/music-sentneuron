@@ -14,9 +14,9 @@ GENERATED_DIR = './generated'
 def update_states_for_layers(model, layer_idxs, h_state, c_state):
     for layer_idx in layer_idxs:
         units = model.get_layer(index=layer_idx).units
-        model.get_layer(index=layer_idx).states = (tf.Variable(h_state[(layer_idx - 1) * units: layer_idx * units]),
-                                                   tf.Variable(c_state[(layer_idx - 1) * units: layer_idx * units]))
-        return model
+        model.get_layer(index=layer_idx).states = (tf.Variable(h_state[(layer_idx - 1) * units: layer_idx * units].reshape(1, units)),
+                                                   tf.Variable(c_state[(layer_idx - 1) * units: layer_idx * units].reshape(1, units)))
+    return model
 
 
 def override_neurons(model, layer_idxs, override):
@@ -24,7 +24,7 @@ def override_neurons(model, layer_idxs, override):
 
     for neuron, value in override.items():
         # why is this int(value) - its making everything zero
-        c_state[:, int(neuron)] = value
+        c_state[int(neuron)] = value
 
     model = update_states_for_layers(model, layer_idxs, h_state, c_state)
 

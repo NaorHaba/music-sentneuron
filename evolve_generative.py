@@ -104,6 +104,7 @@ def calc_fitness(individual, gen_model, cls_model, char2idx, idx2char, layer_idx
         midi_text = generate_midi(gen_model, char2idx, idx2char, seq_len=64, layer_idxs=layer_idxs, override=override)
         generated_midis[i] = encode_sentence(gen_model, midi_text, char2idx, layer_idxs)
 
+    generated_midis = generated_midis[:, sentneuron_ixs]
     midis_sentiment = cls_model.predict(generated_midis).clip(min=0)
 
     if opt.sent == 'regression':
@@ -171,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument('--mrate', type=float, default=0.1, help="Mutation rate.")
     parser.add_argument('--elitism', type=float, default=0.0, help="Elitism in percentage.")
     parser.add_argument('--example_midi', type=str,
-                        default=r"C:\Users\naorh\GitHub\vgmidi\labelled\phrases\Banjo-Kazooie_N64_Banjo-Kazooie_Boggys Igloo Happy_0.mid" ,
+                        default=r"..\vgmidi\labelled\phrases\Banjo-Kazooie_N64_Banjo-Kazooie_Boggys Igloo Happy_0.mid",
                         help="path to example midi required for regression sentiment.")
     parser.add_argument('--activated_neurons_file', type=str,
                         default='trained/activated_neurons.npy',

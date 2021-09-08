@@ -230,7 +230,7 @@ def train_model(train_dataset, test_dataset, model_output):
         pickle.dump(sent_model, f)
 
     # Get activated neurons
-    sentneuron_ixs = get_activated_neurons(activated_neurons_file)
+    # sentneuron_ixs = get_activated_neurons(activated_neurons_file)
 
     # Plot results
     # pr.plot_weight_contribs(coef)
@@ -314,7 +314,9 @@ def train_model(train_dataset, test_dataset, model_output):
 
 
 def get_activated_neurons(activated_neurons_file):
-    return np.load(activated_neurons_file)
+    activated_neurons = np.load(activated_neurons_file)
+    return activated_neurons.reshape(activated_neurons.shape[1])
+
 
 
 if __name__ == "__main__":
