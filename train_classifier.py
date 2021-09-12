@@ -5,11 +5,15 @@ import pickle
 import argparse
 import numpy as np
 import tensorflow as tf
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, \
+    GradientBoostingClassifier
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.feature_selection import RFE
 from sklearn.svm import SVR, SVC
-
+from pipelinehelper import PipelineHelper
+from sklearn.pipeline import Pipeline
 import midi_encoder as me
 
 from train_generative import build_generative_model
@@ -110,7 +114,6 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
 
     csv_file = open(datapath, "r")
     data = csv.DictReader(csv_file)
-
     for row in data:
         arousal = row['arousal']
         valence = row['valence']
@@ -140,20 +143,149 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
     xs = np.array(xs)
     return xs, ys
 
+# def create_model(model_output):
+#     if model_output == float("inf"):
+#         return SVR()
+#     else:
+#         return SVC()
+#
+#
+# def create_param_grid(model_output):
+#     if model_output == float("inf"):
+#         return {'C': [0.1, 1, 10, 100], 'gamma': [1, 0.1, 0.01, 0.001], 'kernel': ['linear', 'rbf', 'poly', 'sigmoid']}
+#     else:
+#         return {'C': [0.1, 1, 10, 100], 'gamma': [1, 0.1, 0.01, 0.001], 'kernel': ['linear', 'rbf', 'poly', 'sigmoid']}
+
 
 def create_model(model_output):
     if model_output == float("inf"):
-        return SVR()
+        return Pipeline([
+            ('predictor', PipelineHelper([
+                ('svr', SVR()),
+                ('lin_r', LinearRegression()),
+                ('rfr', RandomForestRegressor()),
+                ('gbr', GradientBoostingRegressor()),
+
+            ])),
+        ])
     else:
-        return SVC()
+        return Pipeline([
+            ('predictor', PipelineHelper([
+                ('svc', SVC()),
+                ('log_r', LogisticRegression()),
+                ('rfc', RandomForestClassifier()),
+                ('gbc', GradientBoostingClassifier()),
+            ])),
+        ])
 
 
-def create_param_grid(model_output):
+def create_param_grid(model_output, pipe):
     if model_output == float("inf"):
-        return {'C': [0.1, 1, 10, 100], 'gamma': [1, 0.1, 0.01, 0.001], 'kernel': ['linear', 'rbf', 'poly', 'sigmoid']}
-    else:
-        return {'C': [0.1, 1, 10, 100], 'gamma': [1, 0.1, 0.01, 0.001], 'kernel': ['linear', 'rbf', 'poly', 'sigmoid']}
+        return {
+            'predictor__selected_model': pipe.named_steps['predictor'].generate({
+                'svr__C': [0.1, 1, 10, 100],
+                'svr__gamma': [1, 0.1, 0.01, 0.001],
+                'svr__kernel': ['linear', 'rbf', 'poly', 'sigmoid'],
 
+                'rfr__bootstrap': [True],
+                'rfr__max_depth': [10, 50, 100, None],
+                'rfr__max_features': ['auto', 'sqrt'],
+                'rfr__min_samples_leaf': [1, 2, 4],
+                'rfr__min_samples_split': [2, 5, 10],
+                'rfr__n_estimators': [200, 1200, 2000],
+
+                "gbr__learning_rate": [0.01, 0.075, 0.2],
+                "gbr__min_samples_split": np.linspace(0.1, 0.5, 3),
+                "gbr__min_samples_leaf": np.linspace(0.1, 0.5, 3),
+                "gbr__max_depth": [3, 5, 8],
+                "gbr__max_features": ["log2", "sqrt"],
+                "gbr__subsample": [0.5, 0.85, 1.0],
+                "gbr__n_estimators": [10]
+            })
+        }
+    else:
+        return {
+            'predictor__selected_model': pipe.named_steps['predictor'].generate({
+                'svc__C': [0.1, 1, 10, 100],
+                'svc__gamma': [1, 0.1, 0.01, 0.001],
+                'svc__kernel': ['linear', 'rbf', 'poly', 'sigmoid'],
+
+                'log_r__C': 2**np.arange(-8, 1).astype(np.float),
+                'log_r__solver': ["liblinear"],
+                'log_r__penalty': ["l1"],
+
+                'rfc__bootstrap': [True],
+                'rfc__max_depth': [10, 100, None],
+                'rfc__max_features': ['auto', 'sqrt'],
+                'rfc__min_samples_leaf': [1, 2, 4],
+                'rfc__min_samples_split': [2, 5, 10],
+                'rfc__n_estimators': [200, 1200, 2000],
+
+                "gbc__learning_rate": [0.01, 0.075, 0.2],
+                "gbc__min_samples_split": np.linspace(0.1, 0.5, 3),
+                "gbc__min_samples_leaf": np.linspace(0.1, 0.5, 3),
+                "gbc__max_depth": [3, 5, 8],
+                "gbc__max_features": ["log2", "sqrt"],
+                "gbc__subsample": [0.5, 0.85, 1.0],
+                "gbc__n_estimators": [10]
+            })
+        }
+
+# def create_param_grid(model_output, pipe):
+#     if model_output == float("inf"):
+#         return {
+#             'predictor__selected_model': pipe.named_steps['predictor'].generate({
+#                 'svr__C': [0.1],
+#                 'svr__gamma': [1],
+#                 'svr__kernel': ['linear'],
+#
+#                 'rfr__bootstrap': [True],
+#                 'rfr__max_depth': [10],
+#                 'rfr__max_features': ['auto'],
+#                 'rfr__min_samples_leaf': [1],
+#                 'rfr__min_samples_split': [2],
+#                 'rfr__n_estimators': [200],
+#
+#                 "gbr__learning_rate": [0.01],
+#                 "gbr__min_samples_split": np.linspace(0.1, 0.5, 2),
+#                 "gbr__min_samples_leaf": np.linspace(0.1, 0.5, 2),
+#                 "gbr__max_depth":[3],
+#                 "gbr__max_features":["log2"],
+#                 "gbr__criterion": ["friedman_mse"],
+#                 "gbr__subsample":[0.5],
+#                 "gbr__n_estimators":[10]
+#
+#
+#             })
+#         }
+#     else:
+#         return {
+#             'predictor__selected_model': pipe.named_steps['predictor'].generate({
+#                 'svc__C': [0.1],
+#                 'svc__gamma': [1],
+#                 'svc__kernel': ['linear'],
+#
+#                 'log_r__C': 2**np.arange(-8, 1).astype(np.float),
+#                 'log_r__solver': ["liblinear"],
+#                 'log_r__penalty': ["l1"],
+#
+#                 'rfc__bootstrap': [True],
+#                 'rfc__max_depth': [10],
+#                 'rfc__max_features': ['auto'],
+#                 'rfc__min_samples_leaf': [1],
+#                 'rfc__min_samples_split': [2],
+#                 'rfc__n_estimators': [200],
+#
+#                 "gbc__learning_rate": [0.01],
+#                 "gbc__min_samples_split": np.linspace(0.1, 0.5, 2),
+#                 "gbc__min_samples_leaf": np.linspace(0.1, 0.5, 2),
+#                 "gbc__max_depth":[3],
+#                 "gbc__max_features":["log2"],
+#                 "gbc__criterion": ["friedman_mse"],
+#                 "gbc__subsample":[0.5],
+#                 "gbc__n_estimators":[10]
+#             })
+#         }
 
 def get_score_metric(model_output):
     if model_output == float("inf"):
@@ -163,18 +295,20 @@ def get_score_metric(model_output):
 
 
 def train_model(train_dataset, test_dataset, model_output):
-    model = create_model(model_output)
-    param_grid = create_param_grid(model_output)
+    pipe = create_model(model_output)
+    param_grid = create_param_grid(model_output, pipe)
     score_metric = get_score_metric(model_output)
 
     trX, trY = train_dataset
     teX, teY = test_dataset
     # train a GridSearch to find the best parameters of the model
-    search = GridSearchCV(model, param_grid, n_jobs=-1, cv=5, scoring=score_metric)
+    search = GridSearchCV(pipe, param_grid, n_jobs=-1, cv=5, scoring=score_metric)
+
     search.fit(trX, trY)
     cv_score = search.best_score_
     print("cv_score", cv_score)
-    sent_model = search.best_estimator_
+    sent_model = search.best_estimator_['predictor'].selected_model
+    print(sent_model)
 
     score = sent_model.score(teX, teY)
     # Persist sentiment classifier
@@ -200,7 +334,7 @@ if __name__ == "__main__":
     parser.add_argument('--units', type=int, required=True, help="LSTM units.")
     parser.add_argument('--layers', type=int, required=True, help="LSTM layers.")
     parser.add_argument('--cellix', nargs='+', type=int, required=True, help="LSTM layer to use as encoder.")
-    parser.add_argument('--model_output', type=int, default=2,
+    parser.add_argument('--model_output', type=int, default=3,
                         help="amount of classes, infinity means regression")
     parser.add_argument('--n_features', type=float, default=0.1, help="amount of classes, infinity means regression")
     parser.add_argument('--activated_neurons_file', type=str,
