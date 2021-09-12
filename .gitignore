@@ -5,3 +5,4 @@ __pycache__/*
 *.midi
 *.png
 /data
+/trained_old/

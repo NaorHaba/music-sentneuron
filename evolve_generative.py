@@ -12,7 +12,7 @@ from train_classifier import get_activated_neurons
 from train_generative import build_generative_model
 
 GEN_MIN = -1
-GEN_MAX =  1
+GEN_MAX = 1
 
 # Directory where trained model will be saved
 TRAIN_DIR = "./trained"
@@ -61,21 +61,12 @@ def roulette_wheel(population, fitness_pop):
     return population[-1]
 
 
-def select(population, fitness_pop, mating_pool_size, ind_size, elite_rate):
+def select(population, fitness_pop, mating_pool_size, ind_size):
     mating_pool = np.zeros((mating_pool_size, ind_size))
 
     # Apply roulete wheel to select mating_pool_size individuals
     for i in range(mating_pool_size):
         mating_pool[i] = roulette_wheel(population, fitness_pop)
-
-    # Apply elitism
-    assert elite_rate >= 0 and elite_rate <= 1
-    elite_size = int(np.ceil(elite_rate * len(population)))
-    elite_idxs = np.argsort(-fitness_pop, axis=0)
-
-    for i in range(elite_size):
-        r = np.random.randint(0, mating_pool_size)
-        mating_pool[r] = population[elite_idxs[i]]
 
     return mating_pool
 
@@ -87,10 +78,7 @@ def calc_fitness(individual, gen_model, cls_model, char2idx, idx2char, layer_idx
     generated_midis = np.zeros((runs, encoding_size))
 
     # Get activated neurons
-    if opt.sent == 'regression':
-        sentneuron_ixs = get_activated_neurons(activated_neurons_file)
-    else:
-        sentneuron_ixs = get_activated_neurons(activated_neurons_file)
+    sentneuron_ixs = get_activated_neurons(activated_neurons_file)
 
     assert len(individual) == len(sentneuron_ixs), "assert in calc_fitness failed!, len of ind neq to len of sentneuron"
 
@@ -107,6 +95,7 @@ def calc_fitness(individual, gen_model, cls_model, char2idx, idx2char, layer_idx
     generated_midis = generated_midis[:, sentneuron_ixs]
     midis_sentiment = cls_model.predict(generated_midis).clip(min=0)
 
+    # return the score of the generated midis according to the model type:
     if opt.sent == 'regression':
         return - np.sum(np.abs(midis_sentiment - sentiment)) / runs  # negative MAE
     else:
@@ -122,24 +111,41 @@ def evaluate(population, gen_model, cls_model, char2idx, idx2char, layer_idx, se
     return fitness
 
 
+def elite_population(orig_population, new_population, elite_rate, fitness_pop):
+    # Apply elitism
+    assert elite_rate >= 0 and elite_rate <= 1
+    elite_size = int(np.ceil(elite_rate * len(orig_population)))
+    elite_idxs = np.argsort(-fitness_pop, axis=0)
+
+    for i in range(elite_size):
+        r = np.random.randint(0, len(new_population))
+        new_population[r] = orig_population[elite_idxs[i]]
+
+    return new_population
+
+
 def evolve(pop_size, ind_size, mut_rate, elite_rate, epochs, sentiment, activated_neurons_file):
     # Create initial population
     population = np.random.uniform(GEN_MIN, GEN_MAX, (pop_size, ind_size))
 
     # Evaluate initial population
     fitness_pop = evaluate(population, gen_model, cls_model, char2idx, idx2char, opt.cellix, sentiment, activated_neurons_file)
+    print("-> Epoch 0 :")
     print("--> Fitness: \n", fitness_pop)
 
     for i in range(epochs):
-        print("-> Epoch", i)
+        print(f"-> Epoch {i + 1} :")
 
         # Select individuals via roulette wheel to form a mating pool
-        mating_pool = select(population, fitness_pop, pop_size, ind_size, elite_rate)
+        mating_pool = select(population, fitness_pop, pop_size, ind_size)
 
         # Reproduce mating pool with crossover and mutation to form new population
-        population = reproduce(mating_pool, pop_size, ind_size, mut_rate)
+        new_population = reproduce(mating_pool, pop_size, ind_size, mut_rate)
 
-        # Calculate fitness of each individual of the population
+        # Apply elitism:
+        population = elite_population(population, new_population, elite_rate, fitness_pop)
+
+        # Calculate fitness of each individual of the new population
         fitness_pop = evaluate(population, gen_model, cls_model, char2idx, idx2char, opt.cellix, sentiment, activated_neurons_file)
         print("--> Fitness: \n", fitness_pop)
 
@@ -147,10 +153,11 @@ def evolve(pop_size, ind_size, mut_rate, elite_rate, epochs, sentiment, activate
 
 
 def calc_regression_value(cls_model, example_midi, sentneuron_ixs):
+    # calculate the regression value of the given example with the default piano parsing arguments
     defaults = dict(sample_freq=4, piano_range=(33, 93), transpose_range=10, stretching_range=10)
     midi_text = parse_midi(example_midi, **defaults)
     encoded_midi = encode_sentence(gen_model, midi_text, char2idx, opt.cellix)
-    predicted_sent = cls_model.predict(encoded_midi.reshape(1, -1)[:, sentneuron_ixs]).clip(min=0)[0]  # TODO maybe clip not required when predicting for 1 sample
+    predicted_sent = cls_model.predict(encoded_midi.reshape(1, -1)[:, sentneuron_ixs])[0]
     return predicted_sent
 
 
@@ -169,10 +176,10 @@ if __name__ == "__main__":
                         help="Desired emotion from the class_dict defined in train_classifier or 'regression'.")
     parser.add_argument('--popsize', type=int, default=10, help="Population size.")
     parser.add_argument('--epochs', type=int, default=10, help="Epochs to run.")
-    parser.add_argument('--mrate', type=float, default=0.1, help="Mutation rate.")
+    parser.add_argument('--mrate', type=float, default=0.05, help="Mutation rate.")
     parser.add_argument('--elitism', type=float, default=0.0, help="Elitism in percentage.")
     parser.add_argument('--example_midi', type=str,
-                        default=r"..\vgmidi\labelled\phrases\Banjo-Kazooie_N64_Banjo-Kazooie_Boggys Igloo Happy_0.mid",
+                        default=r"..\vgmidi\labelled\phrases\Star Fox_GCN_Star Fox Adventures_Dark Ice Mines_3.mid",
                         help="path to example midi required for regression sentiment.")
     parser.add_argument('--activated_neurons_file', type=str,
                         default='trained/activated_neurons.npy',
@@ -185,7 +192,7 @@ if __name__ == "__main__":
         char2idx = json.load(f)
 
     # Create idx2char from char2idx dict
-    idx2char = {idx:char for char, idx in char2idx.items()}
+    idx2char = {idx: char for char, idx in char2idx.items()}
 
     # Calculate vocab_size from char2idx dict
     vocab_size = len(char2idx)
@@ -214,9 +221,7 @@ if __name__ == "__main__":
 
     ind_size = len(sentneuron_ixs)
 
-
     population, fitness_pop = evolve(opt.popsize, ind_size, opt.mrate, opt.elitism, opt.epochs, sentiment, opt.activated_neurons_file)
-
 
     # Get best individual
     best_idx = np.argmax(fitness_pop)

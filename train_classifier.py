@@ -5,22 +5,19 @@ import pickle
 import argparse
 import numpy as np
 import tensorflow as tf
-from sklearn.pipeline import Pipeline
+from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import StandardScaler
 from sklearn.feature_selection import RFE
 from sklearn.svm import SVR, SVC
 
 import midi_encoder as me
-import plot_results as pr
 
 from train_generative import build_generative_model
-from sklearn.linear_model import LogisticRegression, LinearRegression
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 # Directory where trained model will be saved
 TRAIN_DIR = "./trained"
 
+# dictionary encoding emotions and their place along the "unit circle" of emotions as seen in the article
 class_dict = {0: {'emotion': 'happy', 'angle': 15},
               1: {'emotion': 'delighted', 'angle': 45},
               2: {'emotion': 'excited', 'angle': 75},
@@ -35,6 +32,7 @@ class_dict = {0: {'emotion': 'happy', 'angle': 15},
               11: {'emotion': 'content', 'angle': -15}
               }
 
+
 def preprocess_sentence(text, front_pad='\n ', end_pad=''):
     text = text.replace('\n', ' ').strip()
     text = front_pad+text+end_pad
@@ -48,9 +46,11 @@ def get_states_from_layers(model, layer_idxs):
         h_state, c_state = model.get_layer(index=layer_idx).states
         h_states.append(tf.squeeze(h_state, 0))
         c_states.append(tf.squeeze(c_state, 0))
+    # return a concatenated vector including the states from the received layers
     c_state = np.concatenate(c_states)
     h_state = np.concatenate(h_states)
     return h_state, c_state
+
 
 def encode_sentence(model, text, char2idx, layer_idxs):
     text = preprocess_sentence(text)
@@ -62,49 +62,13 @@ def encode_sentence(model, text, char2idx, layer_idxs):
         # Add the batch dimension
         try:
             input_eval = tf.expand_dims([char2idx[c]], 0)
-            predictions = model(input_eval)
+            model(input_eval)
         except KeyError:
             if c != "":
                 print("Can't process char", c)
     h_state, c_state = get_states_from_layers(model, layer_idxs)
-    # remove the batch dimension
-    #h_state = tf.squeeze(h_state, 0)
-    # c_state = tf.squeeze(c_state, 0)
 
     return tf.math.tanh(c_state).numpy()
-
-# def build_dataset_classifier(datapath, generative_model, char2idx, layer_idx):
-#     xs, ys = [], []
-#
-#     csv_file = open(datapath, "r")
-#     data = csv.DictReader(csv_file)
-#
-#     for row in data:
-#         arousal = row['arousal']
-#         valence = row['valance']
-#         label = int(row["label"])
-#         filepath = row["midi"]
-#
-#         data_dir = os.path.dirname(datapath)
-#         phrase_path = os.path.join(data_dir, filepath) + ".mid"
-#         encoded_path = os.path.join(data_dir, filepath) + ".npy"
-#
-#         # Load midi file as text
-#         if os.path.isfile(encoded_path):
-#             encoding = np.load(encoded_path)
-#         else:
-#             text, vocab = me.load(phrase_path, transpose_range=1, stretching_range=1)
-#
-#             # Encode midi text using generative lstm
-#             encoding = encode_sentence(generative_model, text, char2idx, layer_idx)
-#
-#             # Save encoding in file to make it faster to load next time
-#             np.save(encoded_path, encoding)
-#
-#         xs.append(encoding)
-#         ys.append(label)
-#
-#     return np.array(xs), np.array(ys)
 
 
 def select_features(x_train, y_train, x_test, portion, model_output, activated_neurons_file):
@@ -114,20 +78,22 @@ def select_features(x_train, y_train, x_test, portion, model_output, activated_n
         estimator = SVC(kernel="linear")
     rfe_selector = RFE(estimator, n_features_to_select=portion, step=1)
     selector = rfe_selector.fit(x_train, y_train)
-    rfe_support = selector.support_  # TODO: consider using ranking_
+    rfe_support = selector.support_
 
+    # save activated neurons
     np.save(activated_neurons_file, np.where(rfe_support))
     return x_train[:, rfe_support], x_test[:, rfe_support]
 
 
 def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output):
 
-    def get_label_classifier(valences, arousals, model_output):
+    def get_classifier_label(valences, arousals, model_output):
         def radian_to_point(radian):
             return np.array([np.cos(radian), np.sin(radian)])
 
         results = []
         for v, a in zip(valences, arousals):
+            # add the closest point (representing emotion) to the given (v, a) point
             results.append(min(class_dict.keys(),
                                key=lambda cl: np.linalg.norm(np.array([v, a]) -
                                                              radian_to_point(np.radians(class_dict[cl]['angle'])))
@@ -136,12 +102,9 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
 
     def calc_y(arousals, valences, model_output):
         if model_output == float("inf"):
-            # min max normalization
-            # arousals = (arousals - arousals.min()) / (arousals.max() - arousals.min())
-            # TODO maybe change this return
-            return valences #arousals * valences
+            return valences
         else:
-            return get_label_classifier(valences, arousals, model_output)
+            return get_classifier_label(valences, arousals, model_output)
 
     xs, ys, arousals, valences = [], [], [], []
 
@@ -154,7 +117,6 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
         filepath = row["midi"]
 
         data_dir = os.path.dirname(datapath)
-        # TODO find a better solution than '..' maybe change vigimidi_sent.csv
         path = os.path.join(data_dir, filepath).replace('.mid', '')
         phrase_path = path + ".mid"
         encoded_path = path + ".npy"
@@ -174,21 +136,12 @@ def build_dataset(datapath, generative_model, char2idx, layer_idx, model_output)
         xs.append(encoding)
         arousals.append(arousal)
         valences.append(valence)
-    ys = np.array(calc_y(np.array(arousals).astype(np.float), np.array(valences).astype(np.float), model_output))
+    ys = np.array(calc_y(np.array(arousals).astype(float), np.array(valences).astype(float), model_output))
     xs = np.array(xs)
     return xs, ys
 
 
-def get_model_coef(sent_model, model_output):
-    # TODO change this according to the model type
-    if model_output == float("inf"):
-        return sent_model.coef_
-    else:
-        return sent_model.coef_[0]
-
-
 def create_model(model_output):
-
     if model_output == float("inf"):
         return SVR()
     else:
@@ -206,8 +159,7 @@ def get_score_metric(model_output):
     if model_output == float("inf"):
         return 'neg_mean_absolute_error'
     else:
-        return 'f1_macro'
-
+        return 'accuracy'
 
 
 def train_model(train_dataset, test_dataset, model_output):
@@ -217,11 +169,11 @@ def train_model(train_dataset, test_dataset, model_output):
 
     trX, trY = train_dataset
     teX, teY = test_dataset
+    # train a GridSearch to find the best parameters of the model
     search = GridSearchCV(model, param_grid, n_jobs=-1, cv=5, scoring=score_metric)
     search.fit(trX, trY)
     cv_score = search.best_score_
     print("cv_score", cv_score)
-    # TODO decide if sent_pp needs to be a pipeline or only the model state in the pipeline
     sent_model = search.best_estimator_
 
     score = sent_model.score(teX, teY)
@@ -229,94 +181,12 @@ def train_model(train_dataset, test_dataset, model_output):
     with open(os.path.join(TRAIN_DIR, "classifier_ckpt.p"), "wb") as f:
         pickle.dump(sent_model, f)
 
-    # Get activated neurons
-    # sentneuron_ixs = get_activated_neurons(activated_neurons_file)
-
-    # Plot results
-    # pr.plot_weight_contribs(coef)
-    # pr.plot_logits(trX, trY, sentneuron_ixs)
-
     return score
-
-
-# def train_classifier_model(train_dataset, test_dataset, C=2**np.arange(-8, 1).astype(np.float), seed=42, penalty="l1"):
-#
-#     trX, trY = train_dataset
-#     teX, teY = test_dataset
-#
-#     scores = []
-#
-#     # Hyper-parameter optimization
-#     for i, c in enumerate(C):
-#         logreg_model = LogisticRegression(C=c, penalty=penalty, random_state=seed+i, solver="liblinear")
-#         logreg_model.fit(trX, trY)
-#
-#         score = logreg_model.score(teX, teY)
-#         scores.append(score)
-#
-#     c = C[np.argmax(scores)]
-#
-#     sent_classfier = LogisticRegression(C=c, penalty=penalty, random_state=seed+len(C), solver="liblinear")
-#     sent_classfier.fit(trX, trY)
-#
-#     score = sent_classfier.score(teX, teY) * 100.
-#
-#     # Persist sentiment classifier
-#     with open(os.path.join(TRAIN_DIR, "classifier_ckpt.p"), "wb") as f:
-#         pickle.dump(sent_classfier, f)
-#
-#     # Get activated neurons
-#     sentneuron_ixs = get_activated_neurons(sent_classfier)
-#
-#     # Plot results
-#     pr.plot_weight_contribs(sent_classfier.coef_)
-#     pr.plot_logits(trX, trY, sentneuron_ixs)
-#
-#     return sentneuron_ixs, score
-
-
-
-# def train_classifier_model_regression(train_dataset, test_dataset, C=2**np.arange(-8, 1).astype(np.float), seed=42,
-#                                       penalty="l1"):
-#     trX, trY = train_dataset
-#     teX, teY = test_dataset
-#
-#     # scores = []
-#
-#     # Hyper-parameter optimization
-#     # for i, c in enumerate(C):
-#     #     logreg_model = LinearRegression()
-#     #     logreg_model.fit(trX, trY)
-#     #
-#     #     score = logreg_model.score(teX, teY)
-#     #     scores.append(score)
-#
-#     # c = C[np.argmax(scores)]
-#
-#     sent_classfier = LinearRegression()
-#     sent_classfier.fit(trX, trY)
-#
-#     score = sent_classfier.score(teX, teY)
-#     print(score)
-#
-#     # Persist sentiment classifier
-#     with open(os.path.join(TRAIN_DIR, "classifier_ckpt.p"), "wb") as f:
-#         pickle.dump(sent_classfier, f)
-#
-#     # Get activated neurons
-#     sentneuron_ixs = get_activated_neurons(sent_classfier)
-#
-#     # Plot results
-#     pr.plot_weight_contribs(sent_classfier.coef_)
-#     pr.plot_logits(trX, trY, sentneuron_ixs)
-#
-#     return sentneuron_ixs, score
 
 
 def get_activated_neurons(activated_neurons_file):
     activated_neurons = np.load(activated_neurons_file)
     return activated_neurons.reshape(activated_neurons.shape[1])
-
 
 
 if __name__ == "__main__":
@@ -330,7 +200,7 @@ if __name__ == "__main__":
     parser.add_argument('--units', type=int, required=True, help="LSTM units.")
     parser.add_argument('--layers', type=int, required=True, help="LSTM layers.")
     parser.add_argument('--cellix', nargs='+', type=int, required=True, help="LSTM layer to use as encoder.")
-    parser.add_argument('--model_output', type=int, default=float("inf"),
+    parser.add_argument('--model_output', type=int, default=2,
                         help="amount of classes, infinity means regression")
     parser.add_argument('--n_features', type=float, default=0.1, help="amount of classes, infinity means regression")
     parser.add_argument('--activated_neurons_file', type=str,
@@ -350,7 +220,6 @@ if __name__ == "__main__":
     generative_model.build(tf.TensorShape([1, None]))
 
     # Build dataset from encoded labelled midis
-    # train_dataset = build_dataset(opt.train, generative_model, char2idx, opt.cellix, opt.model_output)
     x, y = build_dataset(opt.dataset, generative_model, char2idx, opt.cellix, opt.model_output)
 
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
@@ -361,5 +230,8 @@ if __name__ == "__main__":
     score = train_model(train_dataset, test_dataset, opt.model_output)
     sentneuron_ixs = np.load(opt.activated_neurons_file)
 
-    print("Total Neurons Used:", len(sentneuron_ixs), "\n", sentneuron_ixs)
+    print("Total Neurons Used:", len(sentneuron_ixs[0]), "\n", sentneuron_ixs)
     print("Test Score:", score)
+
+
+    # --model trained --ch2ix trained/char2idx.json --embed 256 --units 256 --layers 4 --dataset ..\vgmidi\vgmidi.csv --cellix 1 2 3 4
